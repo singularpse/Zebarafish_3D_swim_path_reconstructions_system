@@ -1,0 +1,473 @@
+---
+title: "3DTrackingSystem"
+output: html_notebook
+---
+
+```{r}
+## Trial time for each fish is 10 min = 360000 frame
+rm(list = ls())
+fish.phase <- vector()
+for(i in 1:10) {
+  if(i == 1){
+    fish.phase <- c(fish.phase, rep(paste0("ES_", i), each = 601), rep(paste0("QT_", i), each = 3000))
+  }
+  else(fish.phase <- c(fish.phase, rep(paste0("ES_", i), each = 600), rep(paste0("QT_", i), each = 3000)))
+}
+
+library(tidyverse)
+library(stringr)
+library(ggthemes)
+library(plotly)
+library(zoo)
+library(magrittr)
+library(ggrepel)
+library(viridis)
+library(scales)
+#library(mice)
+#library(VIM)
+
+## import 2d txt
+read_2Dtxt <- function(.) {read.table(., sep = ",", 
+                     fileEncoding = "UCS-2LE", 
+                     header = T, 
+                     fill = T, 
+                     na.strings = "-",
+                     skip = 31
+                     ) %>%
+            filter(row_number() != 1) %>%
+            slice(1:36001)}
+
+files.ventral <- list.files(path = "ventral",
+                            pattern="*.txt", 
+                            full.names = T)
+
+data.ventral <-
+  files.ventral%>% 
+  map_df(~read_2Dtxt(.)) %>%
+  select(Trial_time_ori = Trial.time, X_center_ventral = X.center, Y_center_ventral = Y.center) %>%
+  mutate(fish_file_v= rep(files.ventral, each = 36001), 
+         fish_id = rep(index(files.ventral), each = 36001))
+
+files.lateral <- list.files(path = "lateral",
+                            pattern="*.txt", 
+                            full.names = T)
+
+data.lateral <-
+  files.lateral%>% 
+  map_df(~read_2Dtxt(.)) %>%
+  select(Trial_time_ori = Trial.time, X_center_lateral = X.center, Y_center_lateral = Y.center) %>%
+  mutate(fish_file_l = rep(files.lateral, each = 36001), 
+         fish_id = rep(index(files.lateral), each = 36001))
+
+
+index(files.ventral)
+
+## 3d 
+data.xyzt <- full_join(data.ventral, data.lateral ) %>%
+  mutate(
+    Trial_time_ori = as.numeric(as.character(Trial_time_ori)),
+    X_center_lateral = as.numeric(as.character(X_center_lateral)),
+    Y_center_lateral = as.numeric(as.character(Y_center_lateral)),
+    X_center_ventral = as.numeric(as.character(X_center_ventral)),
+    Y_center_ventral = as.numeric(as.character(Y_center_ventral))
+    )
+
+## correction coefficient by same axis from two camera
+rate_Ventral2Lateral = diff(range(data.xyzt$X_center_lateral, na.rm = T)/diff(range(data.xyzt$X_center_ventral, na.rm = T)))
+data.xyzt$Y_center_ventral <- data.xyzt$Y_center_ventral*rate_Ventral2Lateral
+
+## reshape data.xyzt
+data.xyzt %<>%
+  select(Trial_time_ori, X = X_center_lateral, Y = Y_center_lateral, Z = Y_center_ventral, fish_id, fish_file_v, fish_file_l) %>%
+  mutate(Missing_value_imputation = factor(if_else(is.na(X) | is.na(Y) | is.na(Z), "Y", "N"))) %T>%
+  summary %T>%
+  write.csv("data.xyzt.csv")
+  
+## missing value polynomial interpolation by zoo Package
+Trial_time <- 0:144003*(1/59.94)
+
+data.xyzt.imp <- 
+  data.xyzt %>%
+  select(Trial_time_ori, X, Y, Z, fish_id) %>%
+  group_by(fish_id) %>%
+  na.spline() %>%
+  as.data.frame() %>%
+  group_by(fish_id) %>%
+  mutate(Distance.moved = c(NA, sqrt(diff(X)^2 + diff(Y)^2 + diff(Z)^2)),
+         Velocity = c(NA, sqrt(diff(X)^2 + diff(Y)^2 + diff(Z)^2)/(1/60)),
+         Phase = fish.phase) %>%
+  ungroup() %>%
+  mutate(Missing_value_imputation = data.xyzt$Missing_value_imputation,
+         fish_file_l = data.xyzt$fish_file_l,
+         fish_file_v = data.xyzt$fish_file_v,
+         Trial_time = Trial_time) %>%
+  na.omit() %T>%
+  summary %T>%
+  write.csv("data.xyzt.imp.csv")
+
+data.xyzt.imp %>%
+  filter(Trial_time_ori == 0)
+
+
+data.xyzt.imp %>%
+  select(Trial_time, X, Y , Z) %>%
+  write.table("data.xyzt.imp.txt", sep = "\t", row.names = F)
+
+
+## plot 3D track
+data.3dline <- slice(data.xyzt.imp, 1:1200)
+data.3dline$Phase <- as.factor(data.3dline$Phase)
+plot_ly(data.3dline, x = ~X, y = ~Y, z = ~Z, type = 'scatter3d', mode = 'lines',
+        opacity = 1, line = list(width = 6, color = ~Trial_time, reverscale = FALSE))
+```
+
+
+
+```{r}
+## plot 3D track
+data.3dline <- slice(data.xyzt.imp, 1:1200)
+data.3dline$Phase <- as.factor(data.3dline$Phase)
+plot_ly(data.3dline, x = ~X, y = ~Y, z = ~Z, type = 'scatter3d', mode = 'lines',
+        opacity = 1, line = list(width = 6, color = ~Trial_time, reverscale = FALSE))
+```
+
+
+### FreezyART command line
+```{r}
+for()
+write_file(x, "x.bat")
+shell.exec("x.bat")
+```
+
+
+```{r}
+
+
+Phase.v <- vector()
+for(i in 1:10) {
+    Phase.v <- c(Phase.v, paste0("ES_", 1:10), rep("QT", 50))
+}
+
+Phase.v
+
+
+data.res <- read_tsv("data.xyzt.imp_fuz_res_11_90_08001.txt", comment = "#") %>%
+  select(ID, Flg, Cls, Time) %>%
+  slice(1:2400) %>%
+  mutate(fish_id = rep(1:4, each = 600)) %>%
+  group_by(fish_id) %>%
+  mutate(Phase = Phase.v) %>%
+  mutate(Phase.lite = if_else(grepl("ES", Phase), "ES", "QT"))
+
+data.res$Phase <- factor(data.res$Phase, levels = (c(paste0("ES_", 1:10), paste0("QT_", 1:10))))
+
+data.res.sum <- data.res %>%
+  group_by(Cls) %>%
+  mutate(nCls = n()) %>%
+  ungroup() %>%
+  group_by(Cls, Phase.lite, nCls) %>%
+  summarise(n = n()) %>%
+  mutate(frq = ifelse(grepl("ES", Phase.lite), n/(2400*10/60),  n/(2400*50/60)),
+         p_value = ifelse(grepl("ES", Phase.lite), binom.test(n, nCls, (10/60), alternative="greater",conf.level=0.95)$p.value, binom.test(n, nCls, (50/60), alternative="greater",conf.level=0.95)$p.value))
+
+binom.test(14, 142, 0.5, alternative="greater", conf.level=0.95)
+data.res.sum.ES <- filter(data.res.sum, Phase.lite == "ES")
+data.res.sum.QT <- filter(data.res.sum, Phase.lite == "QT")
+
+
+
+
+
+
+
+
+
+
+ggplot(data.res.sum, aes(Cls, -log(p_value))) + 
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_hline(yintercept = -log(0.05), color = "red", linetype = 2) +
+  geom_text_repel(data = filter(data.res.sum, p_value < 0.05), 
+    aes(label = Cls),
+    size = 5,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines"))  +
+  scale_x_continuous(breaks = 1:length(data.res.sum$Cls)*5) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  #coord_polar() +
+  facet_wrap(~Phase.lite, scales = "free")
+  
+ggsave("p_binom.test.pdf", width = 10, height = 6.18)
+
+# filter(data.res.sum, p_value == min(data.res.sum$p_value))$Cls
+# ggplot(data.res, aes(Cls, fill = Phase.lite)) + geom_histogram() + facet_wrap(~Phase.lite, scales = "free")
+
+
+
+ggplot(data.res.sum, aes(x = factor(Cls), y = frq, fill = Phase.lite)) + 
+  geom_bar(stat="identity", position = "fill") +
+  #scale_fill_colorblind() + 
+  scale_y_continuous(labels = percent) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# ggplot(data.res.sum, aes(Cls, Phase.lite)) + geom_tile(aes(fill = frq), colour = "white") + 
+#   scale_fill_viridis(labels = percent)
+
+```
+
+
+
+```{r}
+data.res.sum.pro <- data.res %>%
+  group_by(Cls, Phase) %>%
+  summarise(n = n()) %>%
+  mutate(frq = ifelse(grepl("ES", Phase), n/(2400*10/60*1/10),  n/(2400*50/60*1/10)))
+
+ggplot(data.res.sum.pro, aes(Cls, fill = Phase)) + geom_histogram() + facet_wrap(~Phase, scales = "free")
+
+
+ggplot(data.res.sum.pro, aes(x = factor(Cls), y = frq, fill = Phase)) + 
+  geom_bar(stat="identity", position = "fill") +
+  scale_fill_viridis(discrete = T) + 
+  scale_y_continuous(labels = percent) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom" )
+
+
+ggplot(data.res.sum.pro, aes(Cls, Phase)) + 
+  geom_tile(aes(fill = frq), colour = "white") + 
+  scale_fill_viridis(labels = percent) +
+  scale_x_continuous(breaks = 1:65*1) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+data.res.sum.pro <- data.res %>%
+  group_by(Cls) %>%
+  mutate(nCls = n()) %>%
+  ungroup() %>%
+  filter(Phase != "QT") %>%
+  group_by(Cls, Phase, nCls) %>%
+  summarise(n = n()) %>%
+  mutate(p_value = binom.test(n, nCls, 0.5*10/60/10, alternative="greater",conf.level=0.95)$p.value,
+         probabilityOfSuccess = binom.test(n, nCls, 0.5/20, alternative="greater",conf.level=0.95)$estimate)
+
+data.res.sum.pro.ES <- filter(data.res.sum.pro, grepl("ES", Phase))
+data.res.sum.pro.QT <- filter(data.res.sum.pro, grepl("QT", Phase))
+
+
+ggplot(data.res.sum.pro, aes(Cls, -log(p_value))) + 
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_hline(yintercept = -log(0.05), color = "red", linetype = 2) +
+  geom_text_repel(data = filter(data.res.sum.pro, p_value < 0.05), 
+    aes(label = Cls),
+    size = 5,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines"))  +
+  scale_x_continuous(breaks = 1:length(data.res.sum.pro$Cls)*5) +
+  #theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  #coord_polar() +
+  facet_wrap(~Phase, scales = "free")
+
+ggsave("p.esn.png", width = 20, height = 20)
+```
+
+```{r}
+data.res.sum.pro <- data.res %>%
+  group_by(Cls) %>%
+  mutate(nCls = n()) %>%
+  ungroup() %>%
+  filter(Phase != "QT") %>%
+  mutate(Phase = "ES") %>%
+  group_by(Cls, Phase, nCls) %>%
+  summarise(n = n()) %>%
+  mutate(p_value = binom.test(n, nCls, 0.5*10/60, alternative="greater",conf.level=0.95)$p.value)
+
+data.res.sum.pro.ES <- filter(data.res.sum.pro, grepl("ES", Phase))
+data.res.sum.pro.QT <- filter(data.res.sum.pro, grepl("QT", Phase))
+
+library(ggrepel)
+ggplot(data.res.sum.pro, aes(Cls, -log(p_value))) + 
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_hline(yintercept = -log(0.05), color = "red", linetype = 2) +
+  geom_text_repel(data = filter(data.res.sum.pro, p_value < 0.05), 
+    aes(label = Cls),
+    size = 5,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines"))  +
+  scale_x_continuous(breaks = 1:length(data.res.sum.pro$Cls)*5) +
+  #theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  #coord_polar() +
+  facet_wrap(~Phase, scales = "free")
+
+ggsave("p1.png")
+```
+
+
+
+```{r}
+
+library(dplyr)
+data.loop.res <- data.frame()
+
+
+### loop begin
+
+
+
+
+pca_input <- 0.8
+vi_input <- 0.8
+timeblock_input <- 1
+
+
+batch_txt_1 <- "@echo off
+cd C:/CEC/FuzzyART
+
+CreateInputData.exe -i C:/Users/%USERNAME%/Documents/フォルダ名1/フォルダ名2/data.imp_cnv.txt -o C:/Users/BOOTCAMP/Documents/3D_Zebrafish/data.imp_fuz_in_"
+
+batch_txt_2 <- "fuzArtExe.exe -i C:/Users/%USERNAME%/Documents/フォルダ名1/フォルダ名2/data.imp_fuz_in_"
+
+
+batch_txt <- paste0(batch_txt_1, timeblock_input,  "_", timeblock_input, ".txt -len ", timeblock_input, " -shift ", timeblock_input, "\n", batch_txt_2, timeblock_input,  "_", timeblock_input, ".txt -o C:/Users/%USERNAME%/Documents/フォルダ名1/フォルダ名2/data.imp_fuz_rez_", timeblock_input,  "_", timeblock_input, "_", pca_input, "_", vi_input, ".txt -pca ", pca_input, " -vi ", vi_input)
+
+
+
+write_file(batch_txt, "run.bat")
+shell.exec("run.bat")
+
+
+data.temp <- as.data.frame(data.res.sum) %>%
+  arrange(p_value) %>%
+  slice(1:3) %>%
+  mutate(pca = pca_input, vi = vi_input, timeblock = timeblock_input)
+
+data.loop.res <- rbind(data.loop.res, data.temp)
+
+
+
+
+
+
+
+
+
+### loop end
+data.loop.res <- data.loop.res %>% 
+  mutate(x = paste(pca, vi, timeblock, sep = ";"))
+
+
+
+
+```
+
+
+
+```{r}
+rm(list = ls())
+library(tidyverse)
+library(stringr)
+library(ggthemes)
+library(plotly)
+library(zoo)
+library(magrittr)
+library(ggrepel)
+library(viridis)
+library(scales)
+
+##Res txt file pathway
+path <- "/Volumes/share/~3D_Zebrafish/20170320_17M_AB_ES/res_raw" 
+## Treatment Interval of one loop (e.g. 60s loop first 10s ES and then 50s QT)
+LoopTime <- 60
+## Treatment Interval in first loop (e.g. 60s loop first 10s ES and then 50s QT)
+TreatmentInterval <- c(0, 10)
+## Treatment Name1[string] which is important 
+Phase.name1 <- "ES"
+## Treatment Name2[string] which is control
+Phase.name2 <- "QT"
+
+
+
+fileNames <- list.files(path=path, pattern = "data.imp_fuz_res_[125].*.txt")
+
+filePath <- sapply(fileNames, function(x){
+  paste(path,x,sep='/')})
+
+raw.3d <- data.frame()
+for (i in filePath[1:10]) {
+  #i = filePath[1] ## 删除测试
+  data.temp.info <- read.table(i, nrows = 5, comment.char = "*", fill = T) %>%
+  t() %>%
+  as.data.frame() %>%
+  select(Res.Trial_time_length = V1, Res.pca = V2, Res.vi = V3, Res.oci = V4, Res.clsn = V5) %>%
+  filter(row_number() == 3L)
+  
+  data.temp <- read_tsv(i, comment = "#") %>%
+    select(1:4) %>%
+    mutate(file = i,
+           pca = as.numeric(as.character(data.temp.info$Res.pca[1])),
+           vi = as.numeric(as.character(data.temp.info$Res.vi[1])),
+           oci = as.numeric(as.character(data.temp.info$Res.oci[1])),
+           clsn = as.numeric(as.character(data.temp.info$Res.clsn[1])),
+           Time = round(Time, 0),
+           time_block = round(mean(diff(.$Time, 1)), 0),
+           Trial_time_length = round(diff(range(.$Time))) + round(mean(diff(.$Time, 1)), 0),
+           Phase = if_else((findInterval(Time %% LoopTime, TreatmentInterval, rightmost.closed = T) == 1) & (findInterval((Time+time_block) %% LoopTime, TreatmentInterval, rightmost.closed = T) == 1), Phase.name1, Phase.name2)
+           ) %>%
+    group_by(Cls) %>%
+    mutate(nCls = n()) %>%
+    ungroup() %>%
+    group_by(Cls, Phase, nCls, pca, vi, oci, clsn, time_block, Trial_time_length) %>%
+    summarise(n = n()) %>%
+    mutate(p_value = ifelse(Phase == Phase.name1, binom.test(n, nCls, (TreatmentInterval[2]/LoopTime), alternative="greater",conf.level=0.95)$p.value, binom.test(n, nCls, (1-(TreatmentInterval[2]/LoopTime)), alternative="greater",conf.level=0.95)$p.value)) 
+    
+  ggplot(data.temp, aes(Cls, -log(p_value))) +
+    geom_bar(stat = "identity", fill = "steelblue") +
+    geom_hline(yintercept = -log(0.05), color = "red", linetype = 2) +
+    geom_text_repel(data = filter(data.temp, p_value < 0.05),
+      aes(label = Cls),
+      size = 5,
+      box.padding = unit(0.35, "lines"),
+      point.padding = unit(0.3, "lines"))  +
+    scale_x_continuous(breaks = 1:length(data.res.sum$Cls)*5) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    #coord_polar() +
+    facet_wrap(~Phase, scales = "free")
+
+  ## make plot_name
+  plot_name <- str_split(i, "/")[[1]] %>%
+    tail(n=1) %>%
+    str_replace("txt", "pdf")
+
+  ggsave(plot_name, width = 10, height = 6.18)
+    
+  data.temp <- data.temp %>%
+    as.data.frame() %>%
+    filter(Phase == Phase.name1) %>%
+    arrange(p_value) %>%
+    slice(1:3)
+ 
+  raw.3d <- rbind(raw.3d, data.temp)
+}
+
+```
+```{r}
+raw.3d <- read_csv("raw.3d.csv") %>%
+  group_by(Phase, pca, vi, clsn, time_block, Trial_time_length) %>%
+  summarise(p_value_mean = min(p_value))
+  
+
+
+ggplot(raw.3d, aes(pca, vi)) + 
+  geom_tile(aes(fill = -log(p_value_mean)), colour = "white") + 
+  geom_text(aes(label = paste0(pca, "%, ", vi, "\n", round(p_value_mean, 5))), size = 0.5, color = "gray80", vjust = 1) +
+  scale_fill_viridis() +
+  scale_x_continuous() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~time_block)
+
+ggsave("p_p_value~pca_vi_timeblock.pdf", width = 12, height = 8)
+
+```
+
